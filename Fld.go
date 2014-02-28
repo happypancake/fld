@@ -4,85 +4,101 @@ import (
 	"net"
 	"time"
 
+	"github.com/coreos/go-etcd/etcd"
 	"github.com/op/go-logging"
 )
 
 var (
-	Instance *Fld
-	address  *string
+	Instance      *Fld
+	address       string
+	outgoing      chan []byte
+	conn          net.Conn
+	addressConfig chan *etcd.Response
+	log           = logging.MustGetLogger("fsd")
 )
 
-type Fld struct {
-	outgoing chan []byte
-	conn     net.Conn
-}
-
-// SendTo switches from the current address
-// to specified one
-func SendTo(newAddress string) {
-	address = &newAddress
-}
+type Fld struct{}
 
 func (fld *Fld) Log(level logging.Level, depth int, rec *logging.Record) error {
 
 	switch level {
 	case logging.CRITICAL:
-		return send(fld, "crit", rec.Formatted())
+		return send("crit", rec.Formatted())
 	case logging.ERROR:
-		return send(fld, "err", rec.Formatted())
+		return send("err", rec.Formatted())
 	case logging.WARNING:
-		return send(fld, "warning", rec.Formatted())
+		return send("warning", rec.Formatted())
 	case logging.NOTICE:
-		return send(fld, "notice", rec.Formatted())
+		return send("notice", rec.Formatted())
 	case logging.INFO:
-		return send(fld, "info", rec.Formatted())
+		return send("info", rec.Formatted())
 	case logging.DEBUG:
-		return send(fld, "debug", rec.Formatted())
+		return send("debug", rec.Formatted())
 	default:
 	}
 	panic("unhandled log level")
 }
 
-func init() {
-	*address = "127.0.0.1:8127"
-	Instance = &Fld{outgoing: make(chan []byte, 100000)}
-	go Instance.processOutgoing()
+func InitWithDynamicConfig(client *etcd.Client) {
+	addressConfig = make(chan *etcd.Response)
+
+	go watchConfiguration(client, "/logsd/address")
+	go processOutgoing()
 }
 
-func send(fld *Fld, severity string, name string) error {
-	length := float64(len(Instance.outgoing))
-	capacity := float64(cap(Instance.outgoing))
+func watchConfiguration(client *etcd.Client, key string) {
+	for {
+		if _, err := client.Watch(key, 0, false, addressConfig, nil); err != nil {
+			toSleep := 5 * time.Second
+
+			log.Debug("error watching etcd for key %v: %v", key, err)
+			log.Debug("retry in %v", toSleep)
+			time.Sleep(toSleep)
+		}
+	}
+}
+func send(severity string, name string) error {
+	length := float64(len(outgoing))
+	capacity := float64(cap(outgoing))
 
 	if length < capacity*0.9 {
 		payload := severity + "|" + name
-		Instance.outgoing <- []byte(payload)
+		outgoing <- []byte(payload)
 	}
 	return nil
 }
 
-func (fld *Fld) connect() error {
-	conn, err := net.Dial("udp", *address)
+func connect() error {
+
+	c, err := net.Dial("udp", address)
 	if err != nil {
 		return err
 	}
 
-	fld.conn = conn
+	conn = c
 	return nil
 }
 
-func (fld *Fld) processOutgoing() {
-	for outgoing := range fld.outgoing {
+func hasAddress() bool {
+	return address != ""
+}
 
-		// try reconnecting till success
-		for nil == fld.conn {
-			if err := fld.connect(); err != nil {
-				// if we failed to connect, sleep
-				time.Sleep(time.Second)
+func processOutgoing() {
+	for {
+		select {
+		case outgoing := <-outgoing:
+			if !hasAddress() {
+				break
 			}
-		}
 
-		if _, err := fld.conn.Write(outgoing); err != nil {
-			fld.connect()
+			if _, err := conn.Write(outgoing); err != nil {
+				connect()
+			}
+		case response := <-addressConfig:
+			if response.Node != nil && response.Node.Value != "" {
+				address = response.Node.Value
+				connect()
+			}
 		}
 	}
 }
