@@ -1,20 +1,26 @@
 package fld
 
 import (
-	"flag"
 	"net"
+	"time"
 
 	"github.com/op/go-logging"
 )
 
 var (
 	Instance *Fld
-	address  *string = flag.String("logsd", "127.0.0.1:8127", "UDP endpoint for LogsD daemon")
+	address  *string
 )
 
 type Fld struct {
 	outgoing chan []byte
 	conn     net.Conn
+}
+
+// SendTo switches from the current address
+// to specified one
+func SendTo(newAddress string) {
+	address = &newAddress
 }
 
 func (fld *Fld) Log(level logging.Level, depth int, rec *logging.Record) error {
@@ -38,10 +44,7 @@ func (fld *Fld) Log(level logging.Level, depth int, rec *logging.Record) error {
 }
 
 func init() {
-	start()
-}
-
-func start() {
+	*address = "127.0.0.1:8127"
 	Instance = &Fld{outgoing: make(chan []byte, 100000)}
 	go Instance.processOutgoing()
 }
@@ -70,8 +73,12 @@ func (fld *Fld) connect() error {
 func (fld *Fld) processOutgoing() {
 	for outgoing := range fld.outgoing {
 
-		if nil == fld.conn {
-			fld.connect()
+		// try reconnecting till success
+		for nil == fld.conn {
+			if err := fld.connect(); err != nil {
+				// if we failed to connect, sleep
+				time.Sleep(time.Second)
+			}
 		}
 
 		if _, err := fld.conn.Write(outgoing); err != nil {
