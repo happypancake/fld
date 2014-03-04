@@ -11,10 +11,10 @@ import (
 var (
 	Instance      *Fld
 	address       string
-	outgoing      chan []byte
+	outgoing      = make(chan []byte, 100000)
 	conn          net.Conn
 	addressConfig chan *etcd.Response
-	log           = logging.MustGetLogger("fsd")
+	log           = logging.MustGetLogger("fld")
 )
 
 type Fld struct{}
@@ -46,9 +46,20 @@ func InitWithDynamicConfig(client *etcd.Client) {
 	go processOutgoing()
 }
 
-func watchConfiguration(client *etcd.Client, key string) {
+func getCurrentVersion(client *etcd.Client, key string) *etcd.Response {
 	for {
-		if _, err := client.Watch(key, 0, false, addressConfig, nil); err != nil {
+		if resp, err := client.Get(key, false, false); err == nil {
+			// failed to fetch first value
+			return resp
+		} else {
+			time.Sleep(time.Second)
+		}
+	}
+}
+func watchForUpdates(client *etcd.Client, key string, index uint64) {
+
+	for {
+		if _, err := client.Watch(key, index, false, addressConfig, nil); err != nil {
 			toSleep := 5 * time.Second
 
 			log.Debug("error watching etcd for key %v: %v", key, err)
@@ -56,8 +67,18 @@ func watchConfiguration(client *etcd.Client, key string) {
 			time.Sleep(toSleep)
 		}
 	}
+
+}
+
+func watchConfiguration(client *etcd.Client, key string) {
+
+	resp := getCurrentVersion(client, key)
+	addressConfig <- resp
+
+	watchForUpdates(client, key, resp.EtcdIndex)
 }
 func send(severity string, name string) error {
+
 	length := float64(len(outgoing))
 	capacity := float64(cap(outgoing))
 
@@ -95,6 +116,7 @@ func processOutgoing() {
 				connect()
 			}
 		case response := <-addressConfig:
+
 			if response.Node != nil && response.Node.Value != "" {
 				address = response.Node.Value
 				connect()
