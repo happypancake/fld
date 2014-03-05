@@ -17,7 +17,13 @@ var (
 	log       = logging.MustGetLogger("fld")
 )
 
-func Log(level logging.Level, depth int, rec *logging.Record) error {
+type LoggingBackend struct{}
+
+func NewLoggingBackend() *LoggingBackend {
+	return &LoggingBackend{}
+}
+
+func (*LoggingBackend) Log(level logging.Level, depth int, rec *logging.Record) error {
 
 	switch level {
 	case logging.CRITICAL:
