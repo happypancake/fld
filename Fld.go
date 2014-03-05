@@ -44,7 +44,7 @@ func (*LoggingBackend) Log(level logging.Level, depth int, rec *logging.Record) 
 }
 
 func InitWithDynamicConfig(client *stdetcd.Client, hostname string) {
-	key := fmt.Sprint("/%v/logsd/address", hostname)
+	key := fmt.Sprintf("/%v/logsd/address", hostname)
 	go etcd.GetAndWatchStringValue(client, key, addresses, nil)
 }
 
