@@ -45,7 +45,10 @@ func (*LoggingBackend) Log(level logging.Level, depth int, rec *logging.Record) 
 
 func InitWithDynamicConfig(client *stdetcd.Client, hostname string) {
 	key := fmt.Sprintf("/%v/logsd/address", hostname)
+
+	log.Info("Configuring fld by watching key: %v", key)
 	go etcd.GetAndWatchStringValue(client, key, addresses, nil)
+	go processOutgoing()
 }
 
 func send(severity string, name string) error {
@@ -87,6 +90,7 @@ func processOutgoing() {
 				connect()
 			}
 		case address = <-addresses:
+			log.Info("logsd address received: %v", address)
 			connect()
 		}
 	}
