@@ -79,6 +79,7 @@ func hasAddress() bool {
 }
 
 func processOutgoing() {
+	var current string
 	for {
 		select {
 		case outgoing := <-outgoing:
@@ -90,8 +91,14 @@ func processOutgoing() {
 				connect()
 			}
 		case address = <-addresses:
-			log.Info("logsd address received: %v", address)
-			connect()
+
+			// ignore same key
+			if current != address {
+				log.Info("logsd address received: %v", address)
+				connect()
+				current = address
+			}
+
 		}
 	}
 }
